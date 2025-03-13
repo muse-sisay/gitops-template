@@ -58,4 +58,5 @@ resource "kubernetes_manifest" "eni_config" {
       "subnet" = "${each.value}"
     }
   })
+  depends_on = [module.eks]
 }
