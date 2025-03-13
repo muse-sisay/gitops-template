@@ -8,6 +8,7 @@ terraform {
   }
 }
 
+
 provider "aws" {
   region = var.aws_region
   default_tags {
@@ -17,7 +18,6 @@ provider "aws" {
     }
   }
 }
-
 module "eks" {
   source = "./eks"
 }
@@ -41,3 +41,4 @@ module "ecr_metaphor" {
   repository_name = "metaphor"
   use_ecr         = var.use_ecr
 }
+

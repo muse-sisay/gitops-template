@@ -22,8 +22,7 @@ locals {
   cluster_version = "1.31"
   region          = "<CLOUD_REGION>"
 
-  vpc_cidr = "10.0.0.0/16"
-  azs      = slice(data.aws_availability_zones.available.names, 0, 3)
+  azs = slice(data.aws_availability_zones.available.names, 0, 3)
 
   tags = {
     kubefirst = "true"
@@ -36,7 +35,7 @@ locals {
 
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
-  version = "20.10.0"
+  version = "20.23.0"
 
   cluster_name                   = local.name
   cluster_version                = local.cluster_version
@@ -68,8 +67,10 @@ module "eks" {
       configuration_values = jsonencode({
         env = {
           # Reference docs https://docs.aws.amazon.com/eks/latest/userguide/cni-increase-ip-addresses.html
-          ENABLE_PREFIX_DELEGATION = "true"
-          WARM_PREFIX_TARGET       = "1"
+          ENABLE_PREFIX_DELEGATION           = "true"
+          WARM_PREFIX_TARGET                 = "1"
+          AWS_VPC_K8S_CNI_CUSTOM_NETWORK_CFG = "true"
+          ENI_CONFIG_LABEL_DEF               = "topology.kubernetes.io/zone"
         }
       })
     }
@@ -147,40 +148,6 @@ module "eks" {
 ################################################################################
 # Supporting Resources
 ################################################################################
-
-module "vpc" {
-  source  = "terraform-aws-modules/vpc/aws"
-  version = "4.0.2"
-
-  name = local.name
-  cidr = local.vpc_cidr
-
-  azs             = local.azs
-  private_subnets = [for k, v in local.azs : cidrsubnet(local.vpc_cidr, 4, k)]
-  public_subnets  = [for k, v in local.azs : cidrsubnet(local.vpc_cidr, 8, k + 48)]
-  intra_subnets   = [for k, v in local.azs : cidrsubnet(local.vpc_cidr, 8, k + 52)]
-
-  enable_ipv6            = false
-  create_egress_only_igw = true
-
-  public_subnet_ipv6_prefixes  = [0, 1, 2]
-  private_subnet_ipv6_prefixes = [3, 4, 5]
-  intra_subnet_ipv6_prefixes   = [6, 7, 8]
-
-  enable_nat_gateway   = true
-  single_nat_gateway   = true
-  enable_dns_hostnames = true
-
-  public_subnet_tags = {
-    "kubernetes.io/role/elb" = 1
-  }
-
-  private_subnet_tags = {
-    "kubernetes.io/role/internal-elb" = 1
-  }
-
-  tags = local.tags
-}
 
 module "vpc_cni_irsa" {
   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
@@ -517,7 +484,7 @@ data "aws_iam_policy_document" "crossplane_custom_trust_policy" {
     condition {
       test     = "StringLike"
       variable = "${split("arn:aws:iam::<AWS_ACCOUNT_ID>:oidc-provider/", module.eks.oidc_provider_arn)[1]}:sub"
-      values   = ["system:serviceaccount:crossplane-system:crossplane-provider-terraform-*"]
+      values   = ["system:serviceaccount:crossplane-system:crossplane-provider-terraform-<CLUSTER_NAME>"]
     }
 
     principals {
@@ -616,7 +583,7 @@ EOT
 }
 
 resource "aws_iam_policy" "ssm_access_policy" {
-  name = "kubefirst-pro-api-ssm-access-${local.name}"
+  name        = "kubefirst-pro-api-ssm-access-${local.name}"
   description = "Policy to allow SSM actions for kubefirst-pro-api"
   policy = jsonencode({
     Version = "2012-10-17",
@@ -652,7 +619,6 @@ module "kubefirst_api" {
       namespace_service_accounts = ["kubefirst:kubefirst-pro-api"]
     }
   }
-
   tags = local.tags
 }
 
@@ -736,6 +702,7 @@ module "cluster_autoscaler_irsa" {
   tags = local.tags
 }
 
+
 resource "aws_iam_policy" "cluster_autoscaler" {
   name = "cluster-autoscaler-${local.name}"
   path = "/"
@@ -807,6 +774,3 @@ resource "aws_iam_policy" "vault_kms" {
     ]
   })
 }
-
-
-

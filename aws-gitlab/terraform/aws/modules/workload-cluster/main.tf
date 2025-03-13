@@ -1,4 +1,3 @@
-data "aws_caller_identity" "current" {}
 data "aws_availability_zones" "available" {}
 
 locals {
@@ -22,7 +21,6 @@ module "eks" {
   cluster_endpoint_public_access = true
   create_kms_key                 = false
   cluster_encryption_config      = {}
-  create_iam_role                = true
 
   access_entries = {
     "argocd_<AWS_ACCOUNT_ID>" = {
@@ -41,11 +39,6 @@ module "eks" {
   }
 
   cluster_addons = {
-    # AWS launch CoreDNS itself with their add-on https://docs.aws.amazon.com/eks/latest/userguide/managing-coredns.html
-    # coredns = {
-    #   most_recent = true
-    #   resolve_conflicts = "OVERWRITE"
-    # }
     aws-ebs-csi-driver = {
       most_recent              = true
       service_account_role_arn = module.aws_ebs_csi_driver.iam_role_arn
@@ -76,19 +69,9 @@ module "eks" {
   subnet_ids               = module.vpc.private_subnets
   control_plane_subnet_ids = module.vpc.intra_subnets
 
-  # aws_auth_roles = [
-  #   # managed node group is automatically added to the configmap
-  #   {
-  #     rolearn  = ""
-  #     username = ""
-  #     groups   = ["system:masters"]
-  #   },
-  # ]
-
   eks_managed_node_group_defaults = {
     ami_type       = var.ami_type
     instance_types = [var.node_type]
-
     # We are using the IRSA created below for permissions
     # However, we have to deploy with the policy attached FIRST (when creating a fresh cluster)
     # and then turn this off after the cluster/node group is created. Without this initial policy,
@@ -111,16 +94,23 @@ module "eks" {
     }
   }
 
-  tags = local.tags
+  enable_cluster_creator_admin_permissions = true
+  tags                                     = local.tags
 }
 
 ################################################################################
 # Supporting Resources
 ################################################################################
 
+# Avoid collisions for generated values
+resource "random_integer" "id" {
+  min = 1000
+  max = 9999
+}
+
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
-  version = "4.0.2"
+  version = "~> 5.9.0"
 
   name = var.cluster_name
   cidr = local.vpc_cidr
@@ -154,14 +144,13 @@ module "vpc" {
 
 module "vpc_cni_irsa" {
   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version = "5.32.0"
+  version = "~> 5.42.0"
 
   role_name             = upper("VPC-CNI-IRSA-${var.cluster_name}")
   attach_vpc_cni_policy = true
   role_policy_arns = {
     AmazonEKS_CNI_Policy = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
   }
-
 
   oidc_providers = {
     main = {
@@ -175,7 +164,7 @@ module "vpc_cni_irsa" {
 
 module "aws_ebs_csi_driver" {
   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version = "5.32.0"
+  version = "~> 5.42.0"
 
   role_name = upper("EBS-CSI-DRIVER-${var.cluster_name}")
 
@@ -194,7 +183,7 @@ module "aws_ebs_csi_driver" {
 }
 
 resource "aws_iam_policy" "aws_ebs_csi_driver" {
-  name        = "aws-ebs-csi-driver-${var.cluster_name}"
+  name        = "aws-ebs-csi-driver-${var.cluster_name}-${random_integer.id.result}"
   path        = "/"
   description = "policy for aws ebs csi driver"
 
@@ -335,9 +324,10 @@ resource "aws_iam_policy" "aws_ebs_csi_driver" {
 EOT
 }
 
+
 module "cert_manager" {
   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version = "5.32.0"
+  version = "~> 5.42.0"
 
   role_name = "cert-manager-${var.cluster_name}"
   role_policy_arns = {
@@ -354,7 +344,7 @@ module "cert_manager" {
 }
 
 resource "aws_iam_policy" "cert_manager" {
-  name        = "cert-manager-${var.cluster_name}"
+  name        = "cert-manager-${var.cluster_name}-${random_integer.id.result}"
   path        = "/"
   description = "policy for external dns to access route53 resources"
 
@@ -385,9 +375,10 @@ resource "aws_iam_policy" "cert_manager" {
 EOT
 }
 
+
 module "external_dns" {
   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version = "5.32.0"
+  version = "~> 5.42.0"
 
   role_name = "external-dns-${var.cluster_name}"
   role_policy_arns = {
@@ -404,7 +395,7 @@ module "external_dns" {
 }
 
 resource "aws_iam_policy" "external_dns" {
-  name        = "external-dns-${var.cluster_name}"
+  name        = "external-dns-${var.cluster_name}-${random_integer.id.result}"
   path        = "/"
   description = "policy for external dns to access route53 resources"
 
@@ -449,6 +440,7 @@ resource "vault_generic_secret" "clusters" {
     }
   )
 }
+
 
 module "cluster_autoscaler_irsa" {
   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
@@ -497,4 +489,3 @@ resource "aws_iam_policy" "cluster_autoscaler" {
     ]
   })
 }
-
